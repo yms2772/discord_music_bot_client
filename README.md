@@ -1,4 +1,4 @@
-# discord_toy_bot
+# Discord Toy Bot
 디스코드 장난감 봇
 
 # 기능 (음악봇)
