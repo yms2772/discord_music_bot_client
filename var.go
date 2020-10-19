@@ -11,8 +11,8 @@ const (
 )
 
 const (
-	BotToken      = "NzQxOTgyODA2Nzc5MTAxMjA1.Xy_fVg.6eUkayGy9FmjlNSV57arn9hO1JE"
-	YoutubeAPIKey = "AIzaSyCqa-Nek41ClErrgHH5cWSmACZNfE3RqEA"
+	BotToken      = ""
+	YoutubeAPIKey = ""
 )
 
 var (
