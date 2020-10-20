@@ -28,12 +28,13 @@ type Channel struct {
 type VoiceConnection struct {
 	VoiceOption
 
-	GuildID         string
-	VC              *discordgo.VoiceConnection
-	Done            chan error
-	EncodingSession *dca.EncodeSession
-	Idle            bool
-	IdleTime        time.Time
+	GuildID          string
+	VC               *discordgo.VoiceConnection
+	Done             chan error
+	EncodingSession  *dca.EncodeSession
+	Idle             bool
+	IdleTime         time.Time
+	StopRelatedVideo bool
 }
 
 type VoiceOption struct {
@@ -60,7 +61,8 @@ type VideoQueueInfo struct {
 }
 
 type YoutubeSearch struct {
-	Items []struct {
+	NextPageToken string `json:"nextPageToken"`
+	Items         []struct {
 		ID struct {
 			Kind    string `json:"kind"`
 			VideoID string `json:"videoId"`

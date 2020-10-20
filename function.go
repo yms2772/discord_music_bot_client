@@ -54,6 +54,36 @@ func GetYoutubeSearchList(q string) (YoutubeSearch, error) {
 	return youtubeSearch, nil
 }
 
+func GetYoutubeRelatedList(id string) ([]YoutubeSearch, error) {
+	var list []YoutubeSearch
+	var pageToken string
+
+	for i := 0; i < 3; i++ {
+		apiURL := "https://www.googleapis.com/youtube/v3/search"
+		apiURL += "?key=" + YoutubeAPIKey
+		apiURL += "&part=snippet&type=video&maxResults=20&videoEmbeddable=true"
+		apiURL += "&pageToken=" + pageToken
+		apiURL += "&relatedToVideoId=" + id
+
+		resp, err := http.Get(apiURL)
+		if err != nil {
+			break
+		}
+
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		var youtubeSearch YoutubeSearch
+		json.Unmarshal(body, &youtubeSearch)
+
+		list = append(list, youtubeSearch)
+	}
+
+	return list, nil
+}
+
 func SendErrorMessage(s *discordgo.Session, channelID string, code int) {
 	s.ChannelMessageSend(channelID, fmt.Sprintf("```cs\n"+
 		"# 에러가 발생했습니다. 잠시 후 다시 사용해주세요.\n"+

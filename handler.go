@@ -60,16 +60,18 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			},
 			Color: Yellow,
 			Description: fmt.Sprintf("`~p 음악 제목`: 유튜브에서 영상 재생\n\n" +
+				"~pl 음악 제목`: 유튜브에서 관련 영상 이어서 재생\n\n" +
+				"~c`: 유튜브 관련 영상 재생 종료\n\n" +
 				"`~q`: 대기열 확인\n\n" +
 				"`~fs`: 강제 건너뛰기\n\n" +
 				"`~l`: 채널에서 봇 퇴장\n\n" +
 				"`~v 볼륨`: 볼륨 설정\n",
 			),
 		})
-	case "~p", "~play":
+	case "~p", "~play", "~pl", "~playlist":
 		if len(method) < 2 {
 			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
-				"# 사용법: ~p 제목\n"+
+				"# 사용법: {~p, ~pl} 제목\n"+
 				"```",
 			)
 
@@ -198,6 +200,38 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			errorCount++
 		}
 
+		var totalVideo, currentVideo, cantPlay int
+		var relatedList []YoutubeSearch
+
+		switch method[0] {
+		case "~pl", "~playlist":
+			voiceConnection[m.GuildID].StopRelatedVideo = false
+
+			relatedList, err = GetYoutubeRelatedList(result.ID.VideoID)
+			if err != nil {
+				_ = s.ChannelMessageDelete(m.ChannelID, searching.ID)
+				SendErrorMessage(s, m.ChannelID, 20001)
+
+				return
+			}
+
+			if len(relatedList) < 1 {
+				_ = s.ChannelMessageDelete(m.ChannelID, searching.ID)
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("```cs\n"+
+					"# 검색결과가 없습니다.\n"+
+					"```",
+				))
+
+				return
+			}
+
+			for _, page := range relatedList {
+				for range page.Items {
+					totalVideo++
+				}
+			}
+		}
+
 		videoID := result.ID.VideoID
 		videoTitle := html.UnescapeString(result.Snippet.Title)
 		videoThumbnail := result.Snippet.Thumbnails.High.URL
@@ -215,7 +249,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		s.ChannelMessageSendEmbed(m.ChannelID, &discordgo.MessageEmbed{
 			Author: &discordgo.MessageEmbedAuthor{
 				URL:     "https://www.youtube.com/watch?v=" + videoID,
-				Name:    "대기열 추가",
+				Name:    "재생목록 추가",
 				IconURL: m.Author.AvatarURL(""),
 			},
 			Footer: &discordgo.MessageEmbedFooter{
@@ -268,7 +302,116 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			Response:     resp,
 		}
 
+		switch method[0] {
+		case "~pl", "~playlist":
+		LIST:
+			for _, page := range relatedList {
+			ITEM:
+				for _, item := range page.Items {
+					if voiceConnection[m.GuildID].StopRelatedVideo {
+						s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ `종료: %s`", q))
+
+						break LIST
+					}
+
+					errorCount = 0
+
+					resp, videoDuration, err := GetYoutubeMusic(item.ID.VideoID)
+					for err != nil {
+						errorCount++
+
+						if errorCount > 10 {
+							cantPlay++
+							totalVideo--
+
+							continue ITEM
+						}
+
+						resp, videoDuration, err = GetYoutubeMusic(item.ID.VideoID)
+					}
+
+					videoID := item.ID.VideoID
+					videoTitle := html.UnescapeString(item.Snippet.Title)
+					videoThumbnail := item.Snippet.Thumbnails.High.URL
+					videoChannel := html.UnescapeString(item.Snippet.ChannelTitle)
+					videoDurationSeconds := int(videoDuration.Seconds())
+
+					videoDurationH := videoDurationSeconds / 3600
+					videoDurationM := (videoDurationSeconds - (3600 * videoDurationH)) / 60
+					videoDurationS := videoDurationSeconds - (3600 * videoDurationH) - (videoDurationM * 60)
+
+					log.Printf("검색된 영상: %s (%s) (%d초)", videoTitle, item.ID.VideoID, videoDurationSeconds)
+					log.Printf("버퍼 생성: %d bytes", resp.ContentLength)
+					_ = s.ChannelMessageDelete(m.ChannelID, searching.ID)
+
+					s.ChannelMessageSendEmbed(m.ChannelID, &discordgo.MessageEmbed{
+						Author: &discordgo.MessageEmbedAuthor{
+							URL:     "https://www.youtube.com/watch?v=" + videoID,
+							Name:    "재생목록 추가",
+							IconURL: m.Author.AvatarURL(""),
+						},
+						Footer: &discordgo.MessageEmbedFooter{
+							Text:    "Youtube",
+							IconURL: "http://mokky.ipdisk.co.kr:8000/list/HDD1/icon/youtube_logo.png",
+						},
+						Color:       Blue,
+						Description: fmt.Sprintf("[%s](%s)", videoTitle, "https://www.youtube.com/watch?v="+videoID),
+						Thumbnail: &discordgo.MessageEmbedThumbnail{
+							URL: videoThumbnail,
+						},
+						Fields: []*discordgo.MessageEmbedField{
+							{
+								Name:   "채널",
+								Value:  videoChannel,
+								Inline: true,
+							},
+							{
+								Name:   "영상 시간",
+								Value:  fmt.Sprintf("%02d:%02d:%02d", videoDurationH, videoDurationM, videoDurationS),
+								Inline: true,
+							},
+							{
+								Name:   "대기열",
+								Value:  fmt.Sprintf("%d/%d", currentVideo+1, totalVideo),
+								Inline: true,
+							},
+						},
+					})
+
+					log.Println("대기열 전송 중...")
+					currentVideo++
+					unixNano := time.Now().UnixNano()
+
+					videoQueueInfo[m.GuildID] = append(videoQueueInfo[m.GuildID], &VideoQueueInfo{
+						UnixNano:  unixNano,
+						ID:        videoID,
+						Title:     videoTitle,
+						Duration:  videoDurationSeconds,
+						Thumbnail: videoThumbnail,
+					})
+
+					videoQueue[m.GuildID] <- &VideoQueue{
+						UnixNano:     unixNano,
+						ID:           videoID,
+						Title:        videoTitle,
+						Duration:     videoDurationSeconds,
+						Thumbnail:    videoThumbnail,
+						Reader:       bufio.NewReaderSize(resp.Body, int(resp.ContentLength)),
+						BufferLength: int(resp.ContentLength),
+						Response:     resp,
+					}
+				}
+			}
+		}
+
 		log.Println("대기열 전송 완료")
+	case "~c", "~cancel":
+		voiceConnection[m.GuildID].StopRelatedVideo = true
+
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("```md\n"+
+			"# 다음 곡 부터 적용됩니다\n"+
+			"```",
+		))
 	case "~q", "~queue":
 		var data string
 		guild, _ := s.Guild(m.GuildID)
@@ -344,7 +487,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		voiceConnection[m.GuildID].VoiceOption.Volume = volume
 
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("```md\n"+
-			"# 다음 곡 부터 적용됩니다 (볼륨: %d)\n"+
+			"# 다음 곡 까지만 재생됩니다 (볼륨: %d)\n"+
 			"```",
 			volume,
 		))
