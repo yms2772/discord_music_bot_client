@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,21 +39,49 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		return
 	}
 
+	if _, ok := voiceConnection[m.GuildID]; ok {
+		if vcState.ChannelID != voiceConnection[m.GuildID].VC.ChannelID {
+			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
+				"# 다른 채널에서 이미 사용중입니다\n"+
+				"```",
+			)
+
+			return
+		}
+	}
+
 	switch method[0] {
-	case "~p":
+	case "~h", "~help":
+		s.ChannelMessageSendEmbed(m.ChannelID, &discordgo.MessageEmbed{
+			Author: &discordgo.MessageEmbedAuthor{
+				URL:     s.State.Ready.User.AvatarURL(""),
+				Name:    "사용법",
+				IconURL: s.State.Ready.User.AvatarURL(""),
+			},
+			Color: Yellow,
+			Description: fmt.Sprintf("`~p 음악 제목`: 유튜브에서 영상 재생\n\n" +
+				"`~q`: 대기열 확인\n\n" +
+				"`~fs`: 강제 건너뛰기\n\n" +
+				"`~l`: 채널에서 봇 퇴장\n\n" +
+				"`~v 볼륨`: 볼륨 설정\n",
+			),
+		})
+	case "~p", "~play":
 		if len(method) < 2 {
-			s.ChannelMessageSendEmbed(m.ChannelID, &discordgo.MessageEmbed{
-				Author:      &discordgo.MessageEmbedAuthor{},
-				Color:       Red,
-				Title:       "사용법",
-				Description: "`~p 제목`",
-			})
+			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
+				"# 사용법: ~p 제목\n"+
+				"```",
+			)
 
 			return
 		}
 
 		log.Println("================================================================")
 		if _, ok := voiceConnection[m.GuildID]; !ok || !voiceConnection[m.GuildID].VC.Ready {
+			log.Printf("연결: %s", m.GuildID)
+			channel, _ := s.Channel(vcState.ChannelID)
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔗 `연결: %s`", channel.Name))
+
 			done := make(chan error)
 
 			vc, err := JoinVoiceChannel(s, vcState.ChannelID)
@@ -64,6 +93,9 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			}
 
 			voiceConnection[m.GuildID] = &VoiceConnection{
+				VoiceOption: VoiceOption{
+					Volume: 256,
+				},
 				GuildID: m.GuildID,
 				VC:      vc,
 				Done:    done,
@@ -88,25 +120,34 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			}()
 
 			go func() { // IDLE 확인
-				var idle bool
-				var idleTime time.Time
-
 				for {
 					if _, ok := videoQueueInfo[m.GuildID]; ok {
-						if len(videoQueueInfo[m.GuildID]) == 0 && !idle {
-							idle = true
-							idleTime = time.Now()
-						}
+						if _, ok := voiceConnection[m.GuildID]; ok {
+							if voiceConnection[m.GuildID].VC.Ready {
+								if len(videoQueueInfo[m.GuildID]) == 0 && !voiceConnection[m.GuildID].Idle {
+									voiceConnection[m.GuildID].Idle = true
+									voiceConnection[m.GuildID].IdleTime = time.Now()
+								}
 
-						if idle {
-							if time.Since(idleTime).Minutes() > 10 {
-								_ = voiceConnection[m.GuildID].VC.Disconnect()
-								close(videoQueue[m.GuildID])
+								if voiceConnection[m.GuildID].Idle {
+									if time.Since(voiceConnection[m.GuildID].IdleTime).Minutes() > 5 {
+										log.Println("대기 상태로 인해 퇴장")
+										voiceConnection[m.GuildID].Idle = false
+										_ = voiceConnection[m.GuildID].VC.Disconnect()
+										delete(voiceConnection, m.GuildID)
 
-								s.ChannelMessageSend(m.ChannelID, "```cs\n"+
-									"# 대기상태로 인해 퇴장\n"+
-									"```",
-								)
+										if _, ok := <-videoQueue[m.GuildID]; ok {
+											close(videoQueue[m.GuildID])
+										}
+
+										s.ChannelMessageSend(m.ChannelID, "```cs\n"+
+											"# 대기상태로 인해 퇴장\n"+
+											"```",
+										)
+									}
+								}
+							} else {
+								voiceConnection[m.GuildID].Idle = false
 							}
 						}
 					}
@@ -228,7 +269,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		}
 
 		log.Println("대기열 전송 완료")
-	case "~q":
+	case "~q", "~queue":
 		var data string
 		guild, _ := s.Guild(m.GuildID)
 
@@ -249,16 +290,16 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			Color:       Pink,
 			Description: data,
 		})
-	case "~fs":
+	case "~fs", "~force_skip":
 		if item, ok := videoQueueInfo[m.GuildID]; ok && len(item) != 0 {
-			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("▶ `건너뛰기: %s`", videoQueueInfo[m.GuildID][0].Title))
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⏭ `건너뛰기: %s`", videoQueueInfo[m.GuildID][0].Title))
 
 			TTSSkip(m.GuildID)
 		}
-	case "~l":
+	case "~l", "~leave":
 		if _, ok := voiceConnection[m.GuildID]; !ok || !voiceConnection[m.GuildID].VC.Ready {
 			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
-				"# 봇이 들어간 채널이 없습니다\n"+
+				"# 봇이 입장한 채널이 없습니다\n"+
 				"```",
 			)
 
@@ -266,12 +307,47 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		}
 
 		_ = voiceConnection[m.GuildID].VC.Disconnect()
+		delete(voiceConnection, m.GuildID)
 		close(videoQueue[m.GuildID])
 
 		s.ChannelMessageSend(m.ChannelID, "```md\n"+
 			"# 퇴장\n"+
 			"```",
 		)
+	case "~v", "~volume":
+		if len(method) < 2 {
+			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
+				"# 사용법: ~v 볼륨(숫자)\n"+
+				"```",
+			)
+
+			return
+		}
+
+		if _, ok := voiceConnection[m.GuildID]; !ok {
+			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
+				"# 봇이 입장한 채널이 없습니다\n"+
+				"```",
+			)
+		}
+
+		volume, err := strconv.Atoi(method[1])
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "```cs\n"+
+				"# 숫자가 아닙니다\n"+
+				"```",
+			)
+
+			return
+		}
+
+		voiceConnection[m.GuildID].VoiceOption.Volume = volume
+
+		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("```md\n"+
+			"# 다음 곡 부터 적용됩니다 (볼륨: %d)\n"+
+			"```",
+			volume,
+		))
 	case "~ㅋ":
 		vc, err := JoinVoiceChannel(s, vcState.ChannelID)
 		if err != nil {

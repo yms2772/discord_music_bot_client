@@ -96,6 +96,7 @@ func TTSAction(vc *VoiceConnection, item *VideoQueue) {
 	options.RawOutput = true
 	options.Bitrate = 96
 	options.Application = "lowdelay"
+	options.Volume = voiceConnection[vc.GuildID].Volume
 
 	encodingSession, _ := dca.EncodeMem(item.Reader, options)
 	voiceConnection[vc.GuildID].EncodingSession = encodingSession

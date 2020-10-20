@@ -26,10 +26,18 @@ type Channel struct {
 }
 
 type VoiceConnection struct {
+	VoiceOption
+
 	GuildID         string
 	VC              *discordgo.VoiceConnection
 	Done            chan error
 	EncodingSession *dca.EncodeSession
+	Idle            bool
+	IdleTime        time.Time
+}
+
+type VoiceOption struct {
+	Volume int
 }
 
 type VideoQueue struct {
