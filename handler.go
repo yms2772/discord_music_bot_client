@@ -13,15 +13,21 @@ import (
 )
 
 func OnUpdateStatus(s *discordgo.Session, _ *discordgo.Ready) {
+	defer Recover()
+
 	s.UpdateStatus(0, "일")
 }
 
 func OnMessageUpdate(s *discordgo.Session, m *discordgo.MessageCreate) {
+	defer Recover()
+
 	OnWordChainMessage(s, m.Message)
 	OnMusicMessage(s, m.Message)
 }
 
 func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
+	defer Recover()
+
 	if s.State.Ready.User.Username == m.Author.Username {
 		return
 	}
@@ -126,6 +132,10 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 					if _, ok := videoQueueInfo[m.GuildID]; ok {
 						if _, ok := voiceConnection[m.GuildID]; ok {
 							if voiceConnection[m.GuildID].VC.Ready {
+								if len(videoQueueInfo[m.GuildID]) != 0 {
+									voiceConnection[m.GuildID].Idle = false
+								}
+
 								if len(videoQueueInfo[m.GuildID]) == 0 && !voiceConnection[m.GuildID].Idle {
 									voiceConnection[m.GuildID].Idle = true
 									voiceConnection[m.GuildID].IdleTime = time.Now()
@@ -135,12 +145,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 									if time.Since(voiceConnection[m.GuildID].IdleTime).Minutes() > 5 {
 										log.Println("대기 상태로 인해 퇴장")
 										voiceConnection[m.GuildID].Idle = false
-										_ = voiceConnection[m.GuildID].VC.Disconnect()
-										delete(voiceConnection, m.GuildID)
-
-										if _, ok := <-videoQueue[m.GuildID]; ok {
-											close(videoQueue[m.GuildID])
-										}
+										LeaveChannel(m.GuildID)
 
 										s.ChannelMessageSend(m.ChannelID, "```cs\n"+
 											"# 대기상태로 인해 퇴장\n"+
@@ -148,8 +153,6 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 										)
 									}
 								}
-							} else {
-								voiceConnection[m.GuildID].Idle = false
 							}
 						}
 					}
@@ -308,7 +311,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			for _, page := range relatedList {
 			ITEM:
 				for _, item := range page.Items {
-					if voiceConnection[m.GuildID].StopRelatedVideo {
+					if _, ok := voiceConnection[m.GuildID]; !ok || voiceConnection[m.GuildID].StopRelatedVideo {
 						s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ `종료: %s`", q))
 
 						break LIST
@@ -409,7 +412,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		voiceConnection[m.GuildID].StopRelatedVideo = true
 
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("```md\n"+
-			"# 다음 곡 부터 적용됩니다\n"+
+			"# 다음 곡 까지만 재생됩니다\n"+
 			"```",
 		))
 	case "~q", "~queue":
@@ -449,9 +452,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 			return
 		}
 
-		_ = voiceConnection[m.GuildID].VC.Disconnect()
-		delete(voiceConnection, m.GuildID)
-		close(videoQueue[m.GuildID])
+		LeaveChannel(m.GuildID)
 
 		s.ChannelMessageSend(m.ChannelID, "```md\n"+
 			"# 퇴장\n"+
@@ -487,7 +488,7 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 		voiceConnection[m.GuildID].VoiceOption.Volume = volume
 
 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("```md\n"+
-			"# 다음 곡 까지만 재생됩니다 (볼륨: %d)\n"+
+			"# 다음 곡 부터 적용됩니다 (볼륨: %d)\n"+
 			"```",
 			volume,
 		))
@@ -508,6 +509,8 @@ func OnMusicMessage(s *discordgo.Session, m *discordgo.Message) {
 }
 
 func OnWordChainMessage(s *discordgo.Session, m *discordgo.Message) {
+	defer Recover()
+
 	if s.State.Ready.User.Username == m.Author.Username {
 		return
 	}

@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -17,7 +18,15 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+func Recover() {
+	if r := recover(); r != nil {
+		debug.PrintStack()
+	}
+}
+
 func GetYoutubeMusic(id string) (*http.Response, time.Duration, error) {
+	defer Recover()
+
 	yt := ytClient.Client{}
 	ytVideo, err := yt.GetVideo("https://www.youtube.com/watch?v=" + id)
 	if err != nil {
@@ -33,6 +42,8 @@ func GetYoutubeMusic(id string) (*http.Response, time.Duration, error) {
 }
 
 func GetYoutubeSearchList(q string) (YoutubeSearch, error) {
+	defer Recover()
+
 	apiURL := "https://www.googleapis.com/youtube/v3/search"
 	apiURL += "?key=" + YoutubeAPIKey
 	apiURL += "&part=snippet&type=video&maxResults=20&videoEmbeddable=true"
@@ -55,6 +66,8 @@ func GetYoutubeSearchList(q string) (YoutubeSearch, error) {
 }
 
 func GetYoutubeRelatedList(id string) ([]YoutubeSearch, error) {
+	defer Recover()
+
 	var list []YoutubeSearch
 	var pageToken string
 
@@ -85,6 +98,8 @@ func GetYoutubeRelatedList(id string) ([]YoutubeSearch, error) {
 }
 
 func SendErrorMessage(s *discordgo.Session, channelID string, code int) {
+	defer Recover()
+
 	s.ChannelMessageSend(channelID, fmt.Sprintf("```cs\n"+
 		"# 에러가 발생했습니다. 잠시 후 다시 사용해주세요.\n"+
 		"CODE: %d\n"+
@@ -94,6 +109,8 @@ func SendErrorMessage(s *discordgo.Session, channelID string, code int) {
 }
 
 func RemoveQueue(guildID string, unixNano int64) []*VideoQueueInfo {
+	defer Recover()
+
 	var s []*VideoQueueInfo
 
 	for _, item := range videoQueueInfo[guildID] {
@@ -108,6 +125,8 @@ func RemoveQueue(guildID string, unixNano int64) []*VideoQueueInfo {
 }
 
 func TTSActionFromFile(vc *discordgo.VoiceConnection, path string) {
+	defer Recover()
+
 	encodingSession, _ := dca.EncodeFile(path, dca.StdEncodeOptions)
 
 	done := make(chan error)
@@ -121,6 +140,8 @@ func TTSActionFromFile(vc *discordgo.VoiceConnection, path string) {
 }
 
 func TTSAction(vc *VoiceConnection, item *VideoQueue) {
+	defer Recover()
+
 	options := dca.StdEncodeOptions
 	options.BufferedFrames = item.BufferLength
 	options.RawOutput = true
@@ -135,16 +156,21 @@ func TTSAction(vc *VoiceConnection, item *VideoQueue) {
 	err := <-vc.Done
 	if err != nil && err != io.EOF {
 		fmt.Println(err)
+
+		LeaveChannel(vc.GuildID)
 	}
 
 	err = encodingSession.Stop()
 	if err != nil {
+		fmt.Println("세션 Stop 에러")
 		fmt.Println(err)
 	}
 	encodingSession.Cleanup()
 }
 
 func TTSSkip(guildID string) {
+	defer Recover()
+
 	err := voiceConnection[guildID].EncodingSession.Stop()
 	if err != nil {
 		fmt.Println(err)
@@ -152,7 +178,17 @@ func TTSSkip(guildID string) {
 	voiceConnection[guildID].EncodingSession.Cleanup()
 }
 
+func LeaveChannel(guildID string) {
+	defer Recover()
+
+	_ = voiceConnection[guildID].VC.Disconnect()
+	delete(videoQueueInfo, guildID)
+	close(videoQueue[guildID])
+}
+
 func FindUserVoiceState(session *discordgo.Session, userid string) (*discordgo.VoiceState, error) {
+	defer Recover()
+
 	for _, guild := range session.State.Guilds {
 		for _, vs := range guild.VoiceStates {
 			if vs.UserID == userid {
@@ -165,6 +201,8 @@ func FindUserVoiceState(session *discordgo.Session, userid string) (*discordgo.V
 }
 
 func JoinVoiceChannel(session *discordgo.Session, channelID string) (*discordgo.VoiceConnection, error) {
+	defer Recover()
+
 	channel, err := session.Channel(channelID)
 	if err != nil {
 		return nil, err
@@ -174,6 +212,8 @@ func JoinVoiceChannel(session *discordgo.Session, channelID string) (*discordgo.
 }
 
 func GetWord(word, userid string) (*sql.DB, *sql.Rows, bool, string) {
+	defer Recover()
+
 	database, _ := sql.Open("sqlite3", "./word.db")
 
 	rows, err := database.Query(fmt.Sprintf("SELECT item FROM word WHERE item LIKE '%s%%'", word))
@@ -198,6 +238,8 @@ func GetWord(word, userid string) (*sql.DB, *sql.Rows, bool, string) {
 }
 
 func CheckWord(word string) (*sql.DB, *sql.Rows, bool) {
+	defer Recover()
+
 	database, _ := sql.Open("sqlite3", "./word.db")
 
 	rows, err := database.Query("SELECT item FROM word")
@@ -218,6 +260,8 @@ func CheckWord(word string) (*sql.DB, *sql.Rows, bool) {
 }
 
 func CheckExist(word, userid string) bool {
+	defer Recover()
+
 	for _, item := range users[userid].WordLog {
 		if item == word {
 			return true
