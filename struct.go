@@ -2,10 +2,10 @@ package main
 
 import (
 	"bufio"
-	"net/http"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/gorilla/websocket"
 	"github.com/jonas747/dca"
 )
 
@@ -19,22 +19,29 @@ type UserInfo struct {
 	Round     int
 	Retry     int
 	Status    bool
-}
-
-type Channel struct {
-	Done chan error
+	IP        string
 }
 
 type VoiceConnection struct {
 	VoiceOption
 
 	GuildID          string
+	ChannelID        string
 	VC               *discordgo.VoiceConnection
-	Done             chan error
-	EncodingSession  *dca.EncodeSession
+	StreamSession    *dca.StreamingSession
 	Idle             bool
 	IdleTime         time.Time
 	StopRelatedVideo bool
+	IdleCheck        bool
+	QueueStatus      bool
+	Reader           *bufio.Reader
+	Done             chan error
+	StartTime        chan int
+}
+
+type WebsocketConnection struct {
+	Conn     *websocket.Conn
+	Verified bool
 }
 
 type VoiceOption struct {
@@ -42,22 +49,35 @@ type VoiceOption struct {
 }
 
 type VideoQueue struct {
-	UnixNano     int64
-	ID           string
-	Title        string
-	Duration     int
-	Thumbnail    string
-	Reader       *bufio.Reader
-	BufferLength int
-	Response     *http.Response
-}
-
-type VideoQueueInfo struct {
-	UnixNano  int64
+	QueueID   int
+	GuildID   string
 	ID        string
 	Title     string
+	Channel   string
 	Duration  int
 	Thumbnail string
+}
+
+type GetVideoQueueAPI struct {
+	QueueID   int    `json:"queue_id"`
+	GuildID   string `json:"guild_id"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Channel   string `json:"channel"`
+	Duration  int    `json:"duration"`
+	Thumbnail string `json:"thumbnail"`
+	StartTime int    `json:"start_time"`
+}
+
+type Receive struct {
+	GetVideoQueueAPI
+
+	Type         string `json:"type"`
+	Search       string `json:"search"`
+	IP           string `json:"ip"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	Code         string `json:"code"`
 }
 
 type YoutubeSearch struct {
